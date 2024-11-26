@@ -1,29 +1,31 @@
-﻿Func<int, Task<int>> func = (item) =>
+﻿Func<int, CancellationToken, Task<int>> factorial = (item, cancellationToken) =>
 {
     Task<int> resultTask = Task.Run(() =>
     {
-        int delay = item * 2000;
-        
-        Task.Delay(delay).Wait();
+        int result = 1;
+        for (int i = 1; i <= item; i++)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                throw new Exception($"item {item} is cancelled");
 
-        Console.WriteLine(item);
-        
-        if (item % 2 == 0)
-            return item * 2;
+            result *= i;
+            Task.Delay(2000).Wait();
+        }
 
-        return item;
+        Console.WriteLine($"Factorial of {item} is {result}");
+
+        return result;
     });
     return resultTask;
 };
 
 var cancellationSource = new CancellationTokenSource();
 var cancellationToken = cancellationSource.Token;
-cancellationSource.CancelAfter(TimeSpan.FromSeconds(5));
+cancellationSource.CancelAfter(TimeSpan.FromSeconds(4));
 
-var a = MapAsync([1, 2, 3, 4], func, cancellationToken);
+var task = MapAsync([1, 2, 3, 4], factorial, cancellationToken);
 
-
-a.ContinueWith(result =>
+task.ContinueWith(result =>
 {
     if (result.IsFaulted)
     {
@@ -38,7 +40,10 @@ a.ContinueWith(result =>
         }
 }).Wait();
 
-static Task<T[]> MapAsync<T>(T[] arr, Func<T, Task<T>> func, CancellationToken cancellationToken = default)
+Task.Delay(TimeSpan.FromSeconds(5)).Wait();
+
+static Task<T[]> MapAsync<T>(T[] arr, Func<T, CancellationToken, Task<T>> func,
+    CancellationToken cancellationToken = default)
 {
     var t = Task.Run(() =>
     {
@@ -50,23 +55,16 @@ static Task<T[]> MapAsync<T>(T[] arr, Func<T, Task<T>> func, CancellationToken c
         for (int i = 0; i < length; i++)
         {
             int index = i;
-            tasks[index] = func(arr[index]).ContinueWith(task =>
+            tasks[index] = func(arr[index], cancellationToken).ContinueWith(task =>
             {
                 if (task.IsFaulted)
                     throw task.Exception.GetBaseException();
-                
+
                 results[index] = task.Result;
             });
         }
 
-        int checkInterval = 200;
-        while (!tasks.All(t => t.IsCompleted))
-        {
-            if(cancellationToken.IsCancellationRequested)
-                cancellationToken.ThrowIfCancellationRequested();
-            
-            Task.Delay(checkInterval).Wait();
-        }
+        Task.WaitAll(tasks);
         
         return results;
     });
